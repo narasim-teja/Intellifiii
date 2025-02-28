@@ -6,37 +6,23 @@
   "scripts": {
     "start": "bun src/server.ts",
     "dev": "bun --watch src/server.ts",
-    "convert-model": "node scripts/convert-model.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc",
-    "build:zkp": "node scripts/build-native.js",
-    "test:zkp": "NODE_ENV=production ts-node src/privacy/test.ts",
-    "test:contract": "node scripts/test-contract.js",
-    "test:link": "node scripts/test-link.js"
+    "build": "tsc"
   },
   "dependencies": {
-    "@noble/hashes": "^1.7.1",
-    "@noble/secp256k1": "^2.2.3",
-    "@prisma/client": "^6.4.1",
-    "@tensorflow/tfjs": "^4.17.0",
-    "@tensorflow/tfjs-converter": "^4.22.0",
-    "@tensorflow/tfjs-node": "^4.22.0",
+    "@types/bun": "^1.2.4",
     "axios": "^1.6.7",
     "buffer": "^6.0.3",
     "dotenv": "^16.4.7",
     "ethers": "^6.0.0",
-    "fixed-merkle-tree": "^0.7.3",
-    "jose": "^5.2.3",
-    "merkletreejs": "^0.5.1",
     "pg": "^8.13.3",
-    "prisma": "^6.4.1",
     "sharp": "^0.33.2",
     "typescript": "^5.3.3"
   },
   "devDependencies": {
     "@types/node": "^20.11.19",
     "@types/sharp": "^0.32.0",
-    "bun-types": "latest",
+    "bun-types": "^1.2.4",
     "ts-node": "^10.9.1"
   }
 }

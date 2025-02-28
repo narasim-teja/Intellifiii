@@ -1,4 +1,7 @@
+/// <reference types="bun-types" />
+
 /* eslint-disable @typescript-eslint/no-unused-vars */
+
 import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { mkdir } from "fs/promises";
@@ -128,7 +131,7 @@ async function loadModel() {
 
 const server = Bun.serve({
   port: PORT,
-  async fetch(request) {
+  async fetch(request: Request) {
     if (request.method === "OPTIONS") {
       return new Response("Departed", CORS_HEADERS);
     }
