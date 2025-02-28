@@ -1,10 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
-import * as tf from '@tensorflow/tfjs';
-import '@tensorflow/tfjs-backend-webgl';
+import { useState, useCallback, useEffect } from 'react';
 import { uploadToIPFS as uploadToIPFSUtil } from '../utils/ipfsUtils';
-
-// Path to the face recognition model
-const MODEL_URL = '/models/insightface/model.json';
+import { FaceApiService } from '../services/FaceApiService';
 
 // Define the props for the hook
 interface UseFaceProcessingProps {
@@ -14,9 +10,8 @@ interface UseFaceProcessingProps {
 
 export function useFaceProcessing({ 
   onHashGenerated, 
-  onIpfsHashGenerated 
+  onIpfsHashGenerated
 }: UseFaceProcessingProps = {}) {
-  const modelRef = useRef<tf.GraphModel | null>(null);
   const [modelLoading, setModelLoading] = useState(true);
   const [isFaceRegistered, setIsFaceRegistered] = useState(false);
   const [embedding, setEmbedding] = useState<Float32Array | null>(null);
@@ -26,44 +21,27 @@ export function useFaceProcessing({
   const [similarity, setSimilarity] = useState<number | undefined>();
   const [isUploading, setIsUploading] = useState(false);
   const [ipfsHash, setIpfsHash] = useState<string | null>(null);
+  const [isCloudApiHealthy, setIsCloudApiHealthy] = useState<boolean | null>(null);
 
-  // Load the model on component mount
+  // Check cloud API health on component mount
   useEffect(() => {
-    async function loadModel() {
+    async function checkCloudApiHealth() {
       try {
         setModelLoading(true);
-        // Load the model
-        const loadedModel = await tf.loadGraphModel(MODEL_URL);
-        modelRef.current = loadedModel;
-        console.log('Face recognition model loaded successfully');
+        await FaceApiService.healthCheck();
+        setIsCloudApiHealthy(true);
+        console.log('Cloud API health check successful');
       } catch (err) {
-        console.error('Failed to load face recognition model:', err);
-        setError('Failed to load face recognition model. Please try again later.');
+        console.error('Cloud API health check failed:', err);
+        setIsCloudApiHealthy(false);
+        setError('Failed to connect to face analysis API. Please try again later.');
       } finally {
         setModelLoading(false);
       }
     }
 
-    loadModel();
-
-    // Cleanup function
-    return () => {
-      if (modelRef.current) {
-        // Dispose of the model when component unmounts
-        modelRef.current.dispose();
-      }
-    };
+    checkCloudApiHealth();
   }, []);
-
-  // Helper function to load an image from a data URL
-  const loadImage = (src: string): Promise<HTMLImageElement> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = (err) => reject(err);
-      img.src = src;
-    });
-  };
 
   // Generate a hash from the face embedding
   const generateHash = useCallback(async (embedding: Float32Array): Promise<string> => {
@@ -86,7 +64,6 @@ export function useFaceProcessing({
     }
   }, []);
 
-  
   // Check if an embedding is valid (not all zeros or very small values)
   const isValidEmbedding = useCallback((embedding: Float32Array): boolean => {
     // Count zeros and very small values
@@ -160,137 +137,71 @@ export function useFaceProcessing({
     return isValid;
   }, []);
 
-  // Process an image and generate a face embedding
+  // Process an image using the cloud API
   const processImage = useCallback(async (imgDataUrl: string) => {
     try {
-      console.log('Starting face processing...');
+      console.log('Starting face processing with cloud API...');
       setIsProcessing(true);
       setError(null);
       setHash(null);
       setEmbedding(null);
 
-      // Load the image
-      const img = await loadImage(imgDataUrl);
-      console.log('Image loaded, dimensions:', `${img.width}x${img.height}`);
-
-      // Create a canvas for image processing
-      const canvas = document.createElement('canvas');
-      const size = 192; // Match model's expected input size
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-
-      if (!ctx) {
-        throw new Error('Could not get canvas context');
-      }
-
-      // Draw and process the image
-      ctx.drawImage(img, 0, 0, size, size);
-      const pixelData = ctx.getImageData(0, 0, size, size);
-      const data = pixelData.data;
-
-      // Generate a robust perceptual hash
-      const blockSize = 8;
-      const numBlocks = size / blockSize;
-      const numChannels = 3;
-      const hashData = new Float32Array(numBlocks * numBlocks * numChannels * 4); // 4 features per block
-      let hashIndex = 0;
-
-      // Process image in blocks
-      for (let y = 0; y < size; y += blockSize) {
-        for (let x = 0; x < size; x += blockSize) {
-          // Calculate block statistics for each channel
-          for (let c = 0; c < numChannels; c++) {
-            let sum = 0;
-            let sumSquared = 0;
-            let min = 255;
-            let max = 0;
-
-            // Process each pixel in the block
-            for (let by = 0; by < blockSize; by++) {
-              for (let bx = 0; bx < blockSize; bx++) {
-                const px = x + bx;
-                const py = y + by;
-                const i = (py * size + px) * 4 + c;
-                const val = data[i];
-                
-                sum += val;
-                sumSquared += val * val;
-                min = Math.min(min, val);
-                max = Math.max(max, val);
-              }
-            }
-
-            const pixelsInBlock = blockSize * blockSize;
-            const mean = sum / pixelsInBlock;
-            const variance = (sumSquared / pixelsInBlock) - (mean * mean);
-            const stdDev = Math.sqrt(Math.max(0, variance));
-            
-            // Store block features
-            hashData[hashIndex++] = (mean / 255) * 2 - 1;     // Normalized mean [-1, 1]
-            hashData[hashIndex++] = (stdDev / 128);           // Normalized std dev [0, ~1]
-            hashData[hashIndex++] = ((max - min) / 255);      // Normalized range [0, 1]
-            hashData[hashIndex++] = ((max + min) / 510) * 2 - 1; // Normalized mid point [-1, 1]
-          }
-        }
-      }
-
-      // Create embedding from hash data
-      const embeddingLength = 3309; // Match model's output size
-      const embedding = new Float32Array(embeddingLength);
+      // Convert data URL to Blob
+      const blob = FaceApiService.dataURLtoBlob(imgDataUrl);
       
-      // Map hash data to embedding space using overlapping windows
-      const windowSize = 16;
-      for (let i = 0; i < embeddingLength; i++) {
-        const start = (i * 7) % (hashData.length - windowSize); // Use overlapping windows
-        let sum = 0;
-        
-        // Combine hash values in the window
-        for (let j = 0; j < windowSize; j++) {
-          sum += hashData[(start + j) % hashData.length];
-        }
-        
-        // Generate embedding value
-        embedding[i] = Math.tanh(sum / windowSize); // Use tanh to bound values to [-1, 1]
+      // Send to cloud API
+      const result = await FaceApiService.analyzeFace(blob);
+      
+      if (!result) {
+        throw new Error('No response from API');
       }
-
-      // L2 normalize the embedding
-      const norm = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
-      for (let i = 0; i < embedding.length; i++) {
-        embedding[i] = embedding[i] / (norm + 1e-10);
+      
+      // Check if the API returned an error
+      if (result.error) {
+        throw new Error(`API error: ${result.error}`);
       }
-
+      
+      // Check if the API returned an embedding
+      if (!result.embedding || !Array.isArray(result.embedding) || result.embedding.length === 0) {
+        throw new Error('No face embedding returned from API. Make sure your face is clearly visible in the image.');
+      }
+      
+      console.log('Received embedding from cloud API with length:', result.embedding.length);
+      
+      // Convert the array to Float32Array
+      const embeddingArray = new Float32Array(result.embedding);
+      
       // Generate hash from the embedding
-      const hashHex = await generateHash(embedding);
+      const hashHex = await generateHash(embeddingArray);
       console.log('Face hash generated:', hashHex.substring(0, 10) + '...');
-
+      
       // Set state
-      setEmbedding(embedding);
+      setEmbedding(embeddingArray);
       setHash(hashHex);
-
+      
       if (onHashGenerated) {
-        onHashGenerated(hashHex, embedding);
+        onHashGenerated(hashHex, embeddingArray);
       }
-
+      
       console.log('Face processing completed successfully');
       
       // Print embedding statistics
       const stats = {
-        nonZeroCount: Array.from(embedding).filter(x => x !== 0).length,
-        mean: embedding.reduce((sum, val) => sum + val, 0) / embedding.length,
-        min: Math.min(...embedding),
-        max: Math.max(...embedding)
+        nonZeroCount: Array.from(embeddingArray).filter(x => x !== 0).length,
+        mean: embeddingArray.reduce((sum, val) => sum + val, 0) / embeddingArray.length,
+        min: Math.min(...embeddingArray),
+        max: Math.max(...embeddingArray)
       };
       
       console.log('Embedding statistics:');
-      console.log(`- Non-zero values: ${stats.nonZeroCount}/${embedding.length}`);
+      console.log(`- Non-zero values: ${stats.nonZeroCount}/${embeddingArray.length}`);
       console.log(`- Mean: ${stats.mean}`);
       console.log(`- Min: ${stats.min}`);
       console.log(`- Max: ${stats.max}`);
-
+      
     } catch (err) {
-      console.error('Error processing image:', err);
-      setError('Failed to process image. Please ensure good lighting and that your face is clearly visible.');
+      console.error('Error processing image with cloud API:', err);
+      setError(`Failed to process image with cloud API: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
@@ -349,6 +260,16 @@ export function useFaceProcessing({
     }
   }, [embedding, onIpfsHashGenerated, isValidEmbedding]);
 
+  // Compare two face embeddings
+  const compareFaceEmbeddings = useCallback((embedding1: Float32Array, embedding2: Float32Array): number => {
+    // Convert Float32Arrays to regular arrays
+    const arr1 = Array.from(embedding1);
+    const arr2 = Array.from(embedding2);
+    
+    // Use FaceApiService for comparison (which now uses a local implementation)
+    return FaceApiService.compareFaceEmbeddings(arr1, arr2);
+  }, []);
+
   return {
     modelLoading,
     isFaceRegistered,
@@ -362,6 +283,8 @@ export function useFaceProcessing({
     faceEmbedding: embedding, // Expose the embedding as faceEmbedding for clarity
     isUploading,
     ipfsHash,
-    uploadToIPFS
+    uploadToIPFS,
+    isCloudApiHealthy,
+    compareFaceEmbeddings
   };
 } 
