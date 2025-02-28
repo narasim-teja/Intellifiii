@@ -1,0 +1,103 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+.yarn/install-state.gz
+**/node_modules/**
+**/.pnpm/**
+**/bun.lockb
+
+# Build outputs
+dist
+dist-ssr
+build
+*.local
+**/dist/**
+**/build/**
+**/.rollup.cache/**
+**/out/**
+**/.next/**
+**/.cache/**
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+**/.env*
+!**/.env.example
+
+# Testing
+coverage
+**/coverage/**
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+**/.DS_Store
+
+# Misc
+.cache
+.temp
+.tmp
+tmp/
+temp/
+**/tmp/**
+**/temp/**
+
+# Ignore the entire scripts folder by default
+scripts/
+**/scripts/venv/**
+
+# But include specific script files that are needed
+
+
+# Ignore model files in public folder
+public/models/
+scripts
+# Large model files
+*.onnx
+*.h5
+*.pb
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.weights
+*.tflite
+*.mlmodel
+*.savedmodel
+*.model
+*.pkl
+*.joblib
+*.tfrecord
+*.data-*
+*.index
+*.meta
+
+# Rust/WASM build artifacts
+**/target/**
+**/.ignored/**
+
+# Ignore any large files (over 10MB)
+# This is a safety measure to prevent accidentally committing large files
+# You'll need to force-add them if you really want to commit them
+# Git doesn't support this directly in .gitignore, but it's a good reminder
