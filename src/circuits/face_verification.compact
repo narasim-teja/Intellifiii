@@ -1,0 +1,23 @@
+// Face verification circuit
+// This circuit proves that the prover knows the IPFS hash corresponding to a face hash
+// without revealing the IPFS hash itself
+
+// Define the circuit
+def main(public faceHash: Field, private ipfsHash: str) {
+  // Hash the IPFS hash to get a field element
+  let ipfsHashField = hash(ipfsHash);
+  
+  // Verify that the face hash matches the hash of the IPFS hash
+  // This is a simplified example - in a real implementation, you would use a more
+  // complex relationship between the face hash and IPFS hash
+  constrain faceHash == ipfsHashField;
+  
+  // Return the face hash as public output
+  return faceHash;
+}
+
+// Helper function to hash a string to a field element
+def hash(input: str) -> Field {
+  // Use the built-in hash function to convert the string to a field element
+  return poseidon(input);
+}

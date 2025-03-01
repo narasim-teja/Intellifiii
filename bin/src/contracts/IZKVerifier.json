@@ -1,0 +1,208 @@
+{
+    "contractName": "IZKVerifier",
+    "abi": [
+        {
+            "inputs": [
+                {
+                    "internalType": "bytes",
+                    "name": "proof",
+                    "type": "bytes"
+                },
+                {
+                    "internalType": "bytes32[]",
+                    "name": "publicInputs",
+                    "type": "bytes32[]"
+                }
+            ],
+            "name": "verifyProof",
+            "outputs": [
+                {
+                    "internalType": "bool",
+                    "name": "",
+                    "type": "bool"
+                }
+            ],
+            "stateMutability": "view",
+            "type": "function"
+        }
+    ],
+    "metadata": "{\"compiler\":{\"version\":\"0.8.28+commit.7893614a\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"bytes\",\"name\":\"proof\",\"type\":\"bytes\"},{\"internalType\":\"bytes32[]\",\"name\":\"publicInputs\",\"type\":\"bytes32[]\"}],\"name\":\"verifyProof\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"}],\"devdoc\":{\"kind\":\"dev\",\"methods\":{},\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"version\":1}},\"settings\":{\"compilationTarget\":{\"/Users/abhaydeshpande/Desktop/Ross/src/contracts/IZKVerifier.sol\":\"IZKVerifier\"},\"evmVersion\":\"cancun\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\"},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[],\"viaIR\":true},\"sources\":{\"/Users/abhaydeshpande/Desktop/Ross/src/contracts/IZKVerifier.sol\":{\"keccak256\":\"0x86665a69fb98a79fff7e03434521b3464152fcd699a5a506bced6e6f6b130440\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://ee430f94f12ae79a4d6ed8f1319441e1093dca0cd50c8e2036584c9eb7d64be2\",\"dweb:/ipfs/QmeeQAf69uHLLYNKhtQaTQpDTnLVk1KR5KRFPXgZGeAp9m\"]}},\"version\":1}",
+    "bytecode": "",
+    "deployedBytecode": "",
+    "sourceMap": "",
+    "deployedSourceMap": "",
+    "sourcePath": "/Users/abhaydeshpande/Desktop/Ross/src/contracts/IZKVerifier.sol",
+    "compiler": {
+        "name": "solc",
+        "version": "0.8.28+commit.7893614a"
+    },
+    "ast": {
+        "absolutePath": "/Users/abhaydeshpande/Desktop/Ross/src/contracts/IZKVerifier.sol",
+        "exportedSymbols": {
+            "IZKVerifier": [
+                283
+            ]
+        },
+        "id": 284,
+        "license": "MIT",
+        "nodeType": "SourceUnit",
+        "nodes": [
+            {
+                "id": 272,
+                "literals": [
+                    "solidity",
+                    "^",
+                    "0.8",
+                    ".0"
+                ],
+                "nodeType": "PragmaDirective",
+                "src": "32:23:2"
+            },
+            {
+                "abstract": false,
+                "baseContracts": [],
+                "canonicalName": "IZKVerifier",
+                "contractDependencies": [],
+                "contractKind": "interface",
+                "fullyImplemented": false,
+                "id": 283,
+                "linearizedBaseContracts": [
+                    283
+                ],
+                "name": "IZKVerifier",
+                "nameLocation": "67:11:2",
+                "nodeType": "ContractDefinition",
+                "nodes": [
+                    {
+                        "functionSelector": "bbcb7c74",
+                        "id": 282,
+                        "implemented": false,
+                        "kind": "function",
+                        "modifiers": [],
+                        "name": "verifyProof",
+                        "nameLocation": "94:11:2",
+                        "nodeType": "FunctionDefinition",
+                        "parameters": {
+                            "id": 278,
+                            "nodeType": "ParameterList",
+                            "parameters": [
+                                {
+                                    "constant": false,
+                                    "id": 274,
+                                    "mutability": "mutable",
+                                    "name": "proof",
+                                    "nameLocation": "128:5:2",
+                                    "nodeType": "VariableDeclaration",
+                                    "scope": 282,
+                                    "src": "115:18:2",
+                                    "stateVariable": false,
+                                    "storageLocation": "memory",
+                                    "typeDescriptions": {
+                                        "typeIdentifier": "t_bytes_memory_ptr",
+                                        "typeString": "bytes"
+                                    },
+                                    "typeName": {
+                                        "id": 273,
+                                        "name": "bytes",
+                                        "nodeType": "ElementaryTypeName",
+                                        "src": "115:5:2",
+                                        "typeDescriptions": {
+                                            "typeIdentifier": "t_bytes_storage_ptr",
+                                            "typeString": "bytes"
+                                        }
+                                    },
+                                    "visibility": "internal"
+                                },
+                                {
+                                    "constant": false,
+                                    "id": 277,
+                                    "mutability": "mutable",
+                                    "name": "publicInputs",
+                                    "nameLocation": "160:12:2",
+                                    "nodeType": "VariableDeclaration",
+                                    "scope": 282,
+                                    "src": "143:29:2",
+                                    "stateVariable": false,
+                                    "storageLocation": "memory",
+                                    "typeDescriptions": {
+                                        "typeIdentifier": "t_array$_t_bytes32_$dyn_memory_ptr",
+                                        "typeString": "bytes32[]"
+                                    },
+                                    "typeName": {
+                                        "baseType": {
+                                            "id": 275,
+                                            "name": "bytes32",
+                                            "nodeType": "ElementaryTypeName",
+                                            "src": "143:7:2",
+                                            "typeDescriptions": {
+                                                "typeIdentifier": "t_bytes32",
+                                                "typeString": "bytes32"
+                                            }
+                                        },
+                                        "id": 276,
+                                        "nodeType": "ArrayTypeName",
+                                        "src": "143:9:2",
+                                        "typeDescriptions": {
+                                            "typeIdentifier": "t_array$_t_bytes32_$dyn_storage_ptr",
+                                            "typeString": "bytes32[]"
+                                        }
+                                    },
+                                    "visibility": "internal"
+                                }
+                            ],
+                            "src": "105:73:2"
+                        },
+                        "returnParameters": {
+                            "id": 281,
+                            "nodeType": "ParameterList",
+                            "parameters": [
+                                {
+                                    "constant": false,
+                                    "id": 280,
+                                    "mutability": "mutable",
+                                    "name": "",
+                                    "nameLocation": "-1:-1:-1",
+                                    "nodeType": "VariableDeclaration",
+                                    "scope": 282,
+                                    "src": "202:4:2",
+                                    "stateVariable": false,
+                                    "storageLocation": "default",
+                                    "typeDescriptions": {
+                                        "typeIdentifier": "t_bool",
+                                        "typeString": "bool"
+                                    },
+                                    "typeName": {
+                                        "id": 279,
+                                        "name": "bool",
+                                        "nodeType": "ElementaryTypeName",
+                                        "src": "202:4:2",
+                                        "typeDescriptions": {
+                                            "typeIdentifier": "t_bool",
+                                            "typeString": "bool"
+                                        }
+                                    },
+                                    "visibility": "internal"
+                                }
+                            ],
+                            "src": "201:6:2"
+                        },
+                        "scope": 283,
+                        "src": "85:123:2",
+                        "stateMutability": "view",
+                        "virtual": false,
+                        "visibility": "external"
+                    }
+                ],
+                "scope": 284,
+                "src": "57:153:2",
+                "usedErrors": [],
+                "usedEvents": []
+            }
+        ],
+        "src": "32:178:2"
+    },
+    "functionHashes": {
+        "verifyProof(bytes,bytes32[])": "bbcb7c74"
+    },
+    "gasEstimates": null
+}
