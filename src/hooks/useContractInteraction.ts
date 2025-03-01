@@ -223,9 +223,8 @@ export function useContractInteraction() {
           return true;
         }
         
-        // Convert Float32Array to Blob for API request
-        const faceBuffer = new Uint8Array(faceEmbedding.buffer);
-        const faceBlob = new Blob([faceBuffer], { type: 'application/octet-stream' });
+        // Pass the face embedding directly to the comparison function
+        // No need to convert to Blob anymore
         
         // Check each registration's embedding for similarity
         for (let i = 0; i < count; i++) {
@@ -249,9 +248,10 @@ export function useContractInteraction() {
             }
             
             // Use the FaceApiService to compare the face with the IPFS hash
+            // Now passing the embedding directly instead of converting to a Blob
             console.log(`Comparing face with IPFS hash: ${registration.ipfsHash}`);
             const comparisonResult = await FaceApiService.compareFaceWithIpfs(
-              faceBlob,
+              faceEmbedding,
               registration.ipfsHash,
               SIMILARITY_THRESHOLD.toString()
             );
@@ -748,8 +748,9 @@ export function useContractInteraction() {
       const baseIpfsHash = ipfsHashes[0];
       console.log(`Using ${baseIpfsHash} as the base for comparison`);
       
-      // Create a dummy blob for API request (the API will use the IPFS hash, not this blob)
-      const dummyBlob = new Blob([new Uint8Array(1)], { type: 'application/octet-stream' });
+      // Create a dummy embedding for API request
+      // The API will use the IPFS hash, not this embedding
+      const dummyEmbedding = new Float32Array(512); // Typical face embedding size
       
       // Compare the first hash with all others using the API
       for (let i = 1; i < ipfsHashes.length; i++) {
@@ -759,7 +760,7 @@ export function useContractInteraction() {
           
           // Use the FaceApiService to compare the two IPFS hashes
           const comparisonResult = await FaceApiService.compareFaceWithIpfs(
-            dummyBlob,
+            dummyEmbedding,
             targetIpfsHash,
             SIMILARITY_THRESHOLD.toString()
           );

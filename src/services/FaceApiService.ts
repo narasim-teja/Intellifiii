@@ -82,19 +82,68 @@ export class FaceApiService {
 
   /**
    * Compares a face image with a face stored in IPFS using the external API
-   * @param imageData The image data as a Blob or Buffer
+   * @param imageData The image data as a Blob or Buffer, or a face embedding
    * @param ipfsHash The IPFS hash of the stored face embedding
    * @param threshold Optional similarity threshold (default: 0.5)
    * @returns The comparison result with similarity score and match status
    */
   static async compareFaceWithIpfs(
-    imageData: Blob | Buffer,
+    imageData: Blob | Buffer | Float32Array,
     ipfsHash: string,
     threshold: string = "0.5"
   ) {
     try {
       console.log('Starting face comparison with IPFS hash:', ipfsHash);
       
+      // Clean the IPFS hash (remove any ipfs:// prefix)
+      const cleanIpfsHash = ipfsHash.replace('ipfs://', '');
+      
+      // Check if imageData is a Float32Array (embedding)
+      if (imageData instanceof Float32Array) {
+        console.log('Detected Float32Array embedding, using direct IPFS comparison');
+        
+        try {
+          // Define the expected structure of the IPFS content
+          interface IPFSEmbeddingData {
+            embedding: number[];
+            timestamp: number;
+            version: string;
+          }
+          
+          // Fetch the embedding data from IPFS
+          const embeddingData = await FaceApiService.fetchFromIPFS<IPFSEmbeddingData>(cleanIpfsHash);
+          
+          if (embeddingData && Array.isArray(embeddingData.embedding)) {
+            console.log("Successfully retrieved embedding from IPFS directly");
+            
+            // Convert the Float32Array to a regular array
+            const sourceEmbedding = Array.from(imageData);
+            
+            // Use our local comparison method
+            const similarity = FaceApiService.compareFaceEmbeddings(
+              sourceEmbedding, 
+              embeddingData.embedding
+            );
+            
+            console.log("Local comparison similarity:", similarity);
+            const thresholdValue = parseFloat(threshold);
+            
+            return {
+              success: true,
+              similarity,
+              isMatch: similarity > thresholdValue,
+              method: "local_embedding_comparison"
+            };
+          } else {
+            throw new Error('Invalid embedding data retrieved from IPFS');
+          }
+        } catch (err) {
+          console.error('Error comparing embeddings directly:', err);
+          throw new Error('Failed to compare face embeddings: ' + (err instanceof Error ? err.message : String(err)));
+        }
+      }
+      
+      // If we get here, we're dealing with image data (Blob or Buffer)
       // Create form data
       const formData = new FormData();
       
@@ -102,9 +151,6 @@ export class FaceApiService {
       const blob = imageData instanceof Blob 
         ? imageData 
         : new Blob([imageData], { type: "image/jpeg" });
-      
-      // Clean the IPFS hash (remove any ipfs:// prefix)
-      const cleanIpfsHash = ipfsHash.replace('ipfs://', '');
       
       // Append the image file, IPFS hash, and threshold to the form data
       formData.append("file", blob, "image.jpg");
@@ -294,6 +340,17 @@ export class FaceApiService {
     // Clean the hash (remove ipfs:// prefix if present)
     const cleanHash = ipfsHash.replace('ipfs://', '');
     
+    // Validate the IPFS hash format
+    if (!cleanHash || cleanHash.trim() === '') {
+      console.error('Invalid IPFS hash: empty or undefined');
+      throw new Error('Invalid IPFS hash: empty or undefined');
+    }
+    
+    console.log(`Attempting to fetch IPFS content for hash: ${cleanHash}`);
+    
+    // Track errors for better diagnostics
+    const errors: Record<string, string> = {};
+    
     // Try each gateway in sequence
     for (const gateway of IPFS_GATEWAYS) {
       try {
@@ -301,22 +358,61 @@ export class FaceApiService {
         const url = `${gateway}${cleanHash}`;
         
         const response = await axios.get(url, {
-          timeout: 5000, // 5 second timeout per gateway
+          timeout: 8000, // Increase timeout to 8 seconds per gateway
         });
         
         if (response.status === 200) {
           console.log(`Successfully retrieved content from ${gateway}`);
+          
+          // Validate the response data
+          if (!response.data) {
+            console.warn(`Empty response from ${gateway}`);
+            errors[gateway] = 'Empty response';
+            continue;
+          }
+          
           return response.data;
         }
       } catch (error) {
-        console.warn(`Failed to fetch from gateway ${gateway}:`, error);
+        // Capture detailed error information
+        if (axios.isAxiosError(error)) {
+          const statusCode = error.response?.status;
+          const errorMessage = error.message || 'Unknown error';
+          
+          if (statusCode === 404) {
+            console.warn(`IPFS hash not found at ${gateway}: 404 Not Found`);
+            errors[gateway] = '404 Not Found';
+          } else if (statusCode === 429) {
+            console.warn(`Rate limited at ${gateway}: 429 Too Many Requests`);
+            errors[gateway] = '429 Too Many Requests';
+          } else if (statusCode === 403) {
+            console.warn(`Access denied at ${gateway}: 403 Forbidden`);
+            errors[gateway] = '403 Forbidden';
+          } else if (error.code === 'ECONNABORTED') {
+            console.warn(`Timeout at ${gateway}: Connection aborted`);
+            errors[gateway] = 'Timeout';
+          } else {
+            console.warn(`Failed to fetch from gateway ${gateway}:`, errorMessage);
+            errors[gateway] = errorMessage;
+          }
+        } else {
+          console.warn(`Failed to fetch from gateway ${gateway}:`, error);
+          errors[gateway] = error instanceof Error ? error.message : String(error);
+        }
         // Continue to the next gateway
       }
     }
     
     // If we get here, all gateways failed
     console.error('All IPFS gateways failed to retrieve content');
-    return null;
+    console.error('Detailed errors:', errors);
+    
+    // Throw a more informative error
+    const errorDetails = Object.entries(errors)
+      .map(([gateway, error]) => `${gateway}: ${error}`)
+      .join('; ');
+    
+    throw new Error(`Failed to retrieve IPFS content from all gateways. Errors: ${errorDetails}`);
   }
 }
 
