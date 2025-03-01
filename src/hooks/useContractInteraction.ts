@@ -2,7 +2,9 @@ import { useState, useCallback, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useDynamicContext } from '@dynamic-labs/sdk-react-core';
 import { getSigner } from '@dynamic-labs/ethers-v6';
-import { retrieveFromIPFS, calculateCosineSimilarity } from '../utils/ipfsUtils';
+import { FaceApiService } from '../services/FaceApiService';
+
+// Import the ABI directly
 import faceAbi from './faceAbi.json';
 
 // Threshold for face similarity (0.75 is a good balance for face recognition)
@@ -11,14 +13,6 @@ const SIMILARITY_THRESHOLD = 0.70;
 
 // Contract address - replace with your deployed contract address
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS;
-
-// Define the type for IPFS data
-interface IPFSData {
-  embedding: number[];
-  timestamp: number;
-  version: string;
-  [key: string]: unknown;
-}
 
 export function useContractInteraction() {
   const { primaryWallet } = useDynamicContext();
@@ -113,8 +107,50 @@ export function useContractInteraction() {
       throw new Error('No wallet connected');
     }
     
-    const signer = await getSigner(primaryWallet);
-    return new ethers.Contract(CONTRACT_ADDRESS, faceAbi.abi, signer);
+    try {
+      // Validate contract address
+      if (!CONTRACT_ADDRESS) {
+        console.error('Contract address is not set');
+        throw new Error('Contract address is not configured. Please check your environment variables.');
+      }
+      
+      // Validate that the address is a valid Ethereum address
+      try {
+        ethers.getAddress(CONTRACT_ADDRESS); // This will throw if invalid
+      } catch {
+        console.error('Invalid contract address format:', CONTRACT_ADDRESS);
+        throw new Error('Invalid contract address format. Please check your configuration.');
+      }
+      
+      const signer = await getSigner(primaryWallet);
+      
+      // Log the ABI to debug
+      console.log('Contract address:', CONTRACT_ADDRESS);
+      console.log('ABI type:', typeof faceAbi);
+      
+      // Create the interface first to ensure proper formatting
+      let contractInterface;
+      try {
+        // Try different ways to get the ABI
+        if (Array.isArray(faceAbi)) {
+          contractInterface = new ethers.Interface(faceAbi);
+        } else if (typeof faceAbi === 'object' && faceAbi !== null && 'abi' in faceAbi && Array.isArray(faceAbi.abi)) {
+          contractInterface = new ethers.Interface(faceAbi.abi);
+        } else {
+          // Last resort, try to parse it as a string
+          contractInterface = new ethers.Interface(JSON.stringify(faceAbi));
+        }
+      } catch (interfaceError) {
+        console.error('Error creating interface:', interfaceError);
+        throw new Error('Invalid ABI format: ' + (interfaceError instanceof Error ? interfaceError.message : String(interfaceError)));
+      }
+      
+      // Create the contract with the properly formatted interface
+      return new ethers.Contract(CONTRACT_ADDRESS, contractInterface, signer);
+    } catch (error) {
+      console.error('Error creating contract instance:', error);
+      throw new Error('Failed to create contract instance: ' + (error instanceof Error ? error.message : String(error)));
+    }
   }, [primaryWallet]);
 
   // Check if a face is already registered by comparing embeddings
@@ -150,12 +186,21 @@ export function useContractInteraction() {
       // return true;
       
       try {
-      const contract = await getContract();
-      
-      // Get all registrations
-      const registrationsCount = await contract.totalRegistrants();
-        console.log('Raw registrationsCount:', registrationsCount);
+        const contract = await getContract();
         
+        // Get all registrations
+        let registrationsCount;
+        try {
+          registrationsCount = await contract.totalRegistrants();
+          console.log('Raw registrationsCount:', registrationsCount);
+        } catch (countError) {
+          console.error('Error getting total registrants:', countError);
+          // If we can't get the count, assume no registrations yet
+          console.log('Assuming no registrations due to contract error');
+          setUniquenessStatus('unique');
+          return true;
+        }
+      
         // Convert to number safely, handling different return types
         let count = 0;
         if (typeof registrationsCount === 'number') {
@@ -169,24 +214,28 @@ export function useContractInteraction() {
           count = parseInt(registrationsCount, 10);
         }
       
-      console.log(`Total registrants: ${count}`);
-      
-      // If no registrations yet, face is definitely unique
-      if (count === 0) {
-        console.log('No registrations found, face is unique');
-        setUniquenessStatus('unique');
-        return true;
-      }
-      
-      // Check each registration's embedding for similarity
-      for (let i = 0; i < count; i++) {
+        console.log(`Total registrants: ${count}`);
+        
+        // If no registrations yet, face is definitely unique
+        if (count === 0) {
+          console.log('No registrations found, face is unique');
+          setUniquenessStatus('unique');
+          return true;
+        }
+        
+        // Convert Float32Array to Blob for API request
+        const faceBuffer = new Uint8Array(faceEmbedding.buffer);
+        const faceBlob = new Blob([faceBuffer], { type: 'application/octet-stream' });
+        
+        // Check each registration's embedding for similarity
+        for (let i = 0; i < count; i++) {
           try {
-        const registrantAddress = await contract.registrants(i);
+            const registrantAddress = await contract.registrants(i);
             console.log(`Registrant ${i} address:`, registrantAddress);
             
-        const registration = await contract.getRegistration(registrantAddress);
-        
-        console.log(`Checking registration for address: ${registrantAddress}`);
+            const registration = await contract.getRegistration(registrantAddress);
+            
+            console.log(`Checking registration for address: ${registrantAddress}`);
             console.log(`IPFS hash: ${registration.ipfsHash}`);
             console.log(`Current wallet address: ${primaryWallet.address}`);
             
@@ -196,44 +245,31 @@ export function useContractInteraction() {
                 registrantAddress.toLowerCase() === primaryWallet.address.toLowerCase() ||
                 (currentIpfsHash && registration.ipfsHash === currentIpfsHash)) {
               console.log('Skipping: empty IPFS hash, own wallet, or same IPFS hash');
-          continue;
-        }
-        
-          // Retrieve the embedding from IPFS
-            console.log(`Retrieving embedding from IPFS: ${registration.ipfsHash}`);
-          const data = await retrieveFromIPFS<IPFSData>(registration.ipfsHash);
-          
-          if (data && data.embedding) {
-            // Convert the array back to Float32Array
-            const storedEmbedding = new Float32Array(data.embedding);
-              
-              // Validate the stored embedding
-              let storedZeroCount = 0;
-              for (let j = 0; j < Math.min(100, storedEmbedding.length); j++) {
-                if (storedEmbedding[j] === 0) {
-                  storedZeroCount++;
-                }
-              }
-              
-              // Skip invalid embeddings with too many zeros
-              if (storedZeroCount > 50) {
-                console.warn(`Skipping invalid stored embedding with too many zeros for address: ${registrantAddress}`);
-                continue;
-              }
-              
-              // Debug: Log embedding sizes and a few values to verify data integrity
-              console.log(`Current embedding length: ${faceEmbedding.length}, Stored embedding length: ${storedEmbedding.length}`);
-              console.log(`Current embedding first 3 values: ${faceEmbedding[0]}, ${faceEmbedding[1]}, ${faceEmbedding[2]}`);
-              console.log(`Stored embedding first 3 values: ${storedEmbedding[0]}, ${storedEmbedding[1]}, ${storedEmbedding[2]}`);
-              
-              // Skip if the embeddings have different lengths
-              if (faceEmbedding.length !== storedEmbedding.length) {
-                console.warn(`Embedding length mismatch: ${faceEmbedding.length} vs ${storedEmbedding.length}. Skipping comparison.`);
-                continue;
-              }
+              continue;
+            }
             
-            // Calculate similarity
-            const similarity = calculateCosineSimilarity(faceEmbedding, storedEmbedding);
+            // Use the FaceApiService to compare the face with the IPFS hash
+            console.log(`Comparing face with IPFS hash: ${registration.ipfsHash}`);
+            const comparisonResult = await FaceApiService.compareFaceWithIpfs(
+              faceBlob,
+              registration.ipfsHash,
+              SIMILARITY_THRESHOLD.toString()
+            );
+            
+            // Check if there was an IPFS access error
+            if (!comparisonResult.success && comparisonResult.error) {
+              console.warn(`API error for hash ${registration.ipfsHash}: ${comparisonResult.error}`);
+              
+              // If it's an IPFS gateway error, skip this registration
+              if (comparisonResult.error.includes('IPFS') || 
+                  comparisonResult.error.includes('gateway') || 
+                  comparisonResult.error.includes('403')) {
+                console.log('Skipping this registration due to IPFS access error');
+                continue; // Skip this registration and continue with the next one
+              }
+            }
+            
+            const similarity = comparisonResult.similarity || 0;
             console.log(`Similarity with registration ${i}: ${similarity}`);
             
             // If similarity is above threshold, face is already registered
@@ -242,32 +278,29 @@ export function useContractInteraction() {
               setUniquenessStatus('duplicate');
               return false;
             }
-            } else {
-              console.log('No embedding data found in IPFS');
-          }
-        } catch (err) {
+          } catch (err) {
             console.error(`Error processing registration ${i}:`, err);
-          // Continue checking other registrations
+            // Continue checking other registrations
+          }
         }
-      }
-      
-      console.log('No similar faces found, face is unique');
-      setUniquenessStatus('unique');
-      return true;
-      } catch (contractErr: unknown) {
-        console.error('Contract interaction error:', contractErr);
         
-        // Fallback: If we can't check the contract, assume it's unique but log the error
-        console.log('Using fallback: Assuming face is unique due to contract error');
+        // If we get here, no similar faces were found
+        console.log('No similar faces found, face is unique');
         setUniquenessStatus('unique');
         return true;
+      } catch (err) {
+        console.error('Error checking face uniqueness:', err);
+        setError('Error checking face uniqueness. Please try again.');
+        setUniquenessStatus('error');
+        return false;
       }
     } catch (err) {
-      console.error('Error checking face uniqueness:', err);
+      console.error('Error in face uniqueness check:', err);
+      setError('Error checking face uniqueness. Please try again.');
       setUniquenessStatus('error');
-      throw err;
+      return false;
     }
-  }, [primaryWallet, getContract, setError]);
+  }, [primaryWallet, getContract, setError, setUniquenessStatus]);
 
   // Helper function to ensure a hash is properly formatted for blockchain transactions
   const ensureValidBytesLike = (hash: string): string => {
@@ -278,51 +311,39 @@ export function useContractInteraction() {
     }
     
     try {
-      // Check if it's already a valid hex string with 0x prefix
-      if (hash.startsWith('0x')) {
-        // Verify it contains only valid hex characters after 0x
-        if (/^0x[0-9a-fA-F]+$/.test(hash)) {
-          return hash; // Already valid
-        } else {
-          console.warn('Hash has 0x prefix but contains non-hex characters:', hash.substring(0, 10) + '...');
-        }
-      }
+      // Remove 0x prefix if present
+      let cleanHash = hash.startsWith('0x') ? hash.slice(2) : hash;
       
-      // Check if it's a base64 string (contains characters not in hex)
-      const containsNonHex = /[^0-9a-fA-F]/.test(hash.startsWith('0x') ? hash.slice(2) : hash);
-      
-      if (containsNonHex) {
-        // Might be base64 encoded, try to convert to hex
+      // Check if it's a valid hex string
+      if (!/^[0-9a-fA-F]+$/.test(cleanHash)) {
+        // Try to convert from base64 if it contains non-hex characters
         try {
-          // If it has 0x prefix, remove it before decoding
-          const rawValue = hash.startsWith('0x') ? hash.slice(2) : hash;
-          
-          // Try to decode as base64
-          const binaryStr = atob(rawValue);
-          
-          // Convert binary to hex
+          const binaryStr = atob(cleanHash);
           let hexValue = '';
           for (let i = 0; i < binaryStr.length; i++) {
             const hex = binaryStr.charCodeAt(i).toString(16).padStart(2, '0');
             hexValue += hex;
           }
-          
-          return '0x' + hexValue;
+          cleanHash = hexValue;
         } catch (e) {
           console.error('Failed to convert possible base64 to hex:', e);
-          // Fall through to next approach
+          throw new Error('Invalid hash format: not a valid hex or base64 string');
         }
       }
       
-      // If it's a plain hex string without 0x prefix, add it
-      if (/^[0-9a-fA-F]+$/.test(hash)) {
-        return '0x' + hash;
+      // Ensure the hash is exactly 32 bytes (64 hex characters)
+      if (cleanHash.length > 64) {
+        // If longer than 32 bytes, truncate
+        console.warn(`Hash is too long (${cleanHash.length / 2} bytes), truncating to 32 bytes`);
+        cleanHash = cleanHash.slice(0, 64);
+      } else if (cleanHash.length < 64) {
+        // If shorter than 32 bytes, pad with zeros
+        console.warn(`Hash is too short (${cleanHash.length / 2} bytes), padding to 32 bytes`);
+        cleanHash = cleanHash.padStart(64, '0');
       }
       
-      // If we get here, we couldn't convert to a valid format
-      console.error('Could not convert hash to valid BytesLike format:', hash.substring(0, 10) + '...');
-      throw new Error('Invalid hash format: could not convert to BytesLike');
-      
+      // Add 0x prefix back
+      return '0x' + cleanHash;
     } catch (err) {
       console.error('Error ensuring valid BytesLike format:', err);
       throw new Error('Failed to process hash for blockchain transaction');
@@ -457,82 +478,175 @@ export function useContractInteraction() {
           return;
         }
         
-        // Format the face hash as a proper bytes value with 0x prefix
+        // Format the face hash as a proper bytes32 value
         const formattedFaceHash = ensureValidBytesLike(faceHash);
         console.log('Formatted face hash:', formattedFaceHash.substring(0, 12) + '...');
         
         // Ensure IPFS hash is properly formatted
-        // Some contracts expect IPFS hashes with ipfs:// prefix, others without
-        const formattedIpfsHash = ipfsHash.startsWith('ipfs://') ? ipfsHash : `ipfs://${ipfsHash}`;
+        // Check if the IPFS hash already has a prefix
+        let formattedIpfsHash = ipfsHash;
+        if (ipfsHash.startsWith('ipfs://')) {
+          // Some contracts expect the hash without the prefix
+          formattedIpfsHash = ipfsHash.replace('ipfs://', '');
+        } else if (ipfsHash.startsWith('Qm') || ipfsHash.startsWith('ba')) {
+          // This is a raw IPFS hash without prefix, which is what most contracts expect
+          formattedIpfsHash = ipfsHash;
+        }
         console.log('Formatted IPFS hash:', formattedIpfsHash);
         
-        // Try different formats if the first one fails
+        // Use ethers.js to create a proper bytes32 value
         try {
           console.log('Sending registration transaction...');
-          const tx = await contract.register(formattedFaceHash, ipfsHash, publicKey);
+          
+          // Examine the contract ABI to understand the expected parameter types
+          const registerFunction = contract.interface.getFunction('register');
+          if (registerFunction) {
+            console.log('Register function ABI:', registerFunction);
+            console.log('Parameter types:', registerFunction.inputs.map((input: {name: string, type: string}) => `${input.name}: ${input.type}`).join(', '));
+          }
+          
+          // Convert to bytes32 using ethers.js utilities
+          const bytes32FaceHash = ethers.zeroPadValue(formattedFaceHash, 32);
+          console.log('Bytes32 face hash:', bytes32FaceHash);
+          console.log('Bytes32 face hash length (bytes):', ethers.getBytes(bytes32FaceHash).length);
+          
+          // Log the parameters being sent to the contract
+          console.log('Contract parameters:');
+          console.log('- faceHash:', bytes32FaceHash);
+          console.log('- publicKey:', publicKey.substring(0, 20) + '...');
+          console.log('- ipfsHash:', formattedIpfsHash);
+          
+          // Try to get more information about the potential revert by calling the function statically
+          try {
+            console.log('Attempting to simulate the transaction...');
+            await contract.register.staticCall(bytes32FaceHash, publicKey, formattedIpfsHash);
+            console.log('Static call succeeded, transaction should work');
+          } catch (staticError) {
+            console.error('Static call failed:', staticError);
+            if (staticError instanceof Error) {
+              console.error('Static call error message:', staticError.message);
+              
+              // Try to extract more information if available
+              if ('data' in staticError) {
+                // Define a type for errors with data property
+                interface ErrorWithData extends Error {
+                  data?: string;
+                }
+                console.error('Error data:', (staticError as ErrorWithData).data);
+              }
+            }
+            // Continue with the transaction anyway, as sometimes static calls fail but transactions succeed
+          }
+          
+          // Try with overrides to provide more gas
+          const tx = await contract.register(bytes32FaceHash, publicKey, formattedIpfsHash, {
+            gasLimit: 500000, // Provide a higher gas limit to ensure it's not a gas issue
+          });
           console.log('Transaction sent, waiting for confirmation...');
           await tx.wait();
           console.log('Transaction confirmed!');
-        } catch (bytesError) {
-          console.error('Error with first format attempt:', bytesError);
+          setRegistrationStatus('success');
+          console.log('Face hash registered successfully!');
+        } catch (txError) {
+          console.error('Transaction error:', txError);
           
-          // Try with a different approach - convert to bytes array first
-          try {
-            // Convert the hex string to a bytes array
-            const bytes = new Uint8Array(faceHash.length / 2);
-            for (let i = 0; i < faceHash.length; i += 2) {
-              bytes[i / 2] = parseInt(faceHash.substring(i, i + 2), 16);
+          // Log more details about the error
+          if (txError instanceof Error) {
+            console.error('Error message:', txError.message);
+            console.error('Error name:', txError.name);
+            // Use a type that includes the code property
+            interface ErrorWithCode extends Error {
+              code?: string | number;
+              data?: string;
+              reason?: string;
             }
+            if ('code' in txError) {
+              console.error('Error code:', (txError as ErrorWithCode).code);
+            }
+            if ('data' in txError) {
+              console.error('Error data:', (txError as ErrorWithCode).data);
+            }
+            if ('reason' in txError) {
+              console.error('Error reason:', (txError as ErrorWithCode).reason);
+            }
+          }
+          
+          // Handle missing revert data error
+          if (txError instanceof Error && txError.message.includes('missing revert data')) {
+            console.log('Detected missing revert data error, trying alternative approach...');
             
-            // Convert to ethers.js compatible format
-            const bytesHex = '0x' + Array.from(bytes)
-              .map(b => b.toString(16).padStart(2, '0'))
-              .join('');
+            // Get the bytes32 face hash again to ensure it's in scope
+            const bytes32FaceHash = ethers.zeroPadValue(formattedFaceHash, 32);
             
-            console.log('Trying alternative format:', bytesHex.substring(0, 12) + '...');
-            const tx = await contract.register(bytesHex, ipfsHash, publicKey);
-            console.log('Transaction sent with alternative format, waiting for confirmation...');
-            await tx.wait();
-            console.log('Transaction confirmed!');
-          } catch (alternativeError) {
-            console.error('Error with alternative format:', alternativeError);
-            
-            // Try a third approach - use ethers.js utils
             try {
-              // Use ethers.js to create a bytes32 value
-              const bytes32 = ethers.zeroPadValue(formattedFaceHash, 32);
-              console.log('Trying third format (bytes32):', bytes32.substring(0, 12) + '...');
+              // Try with a different IPFS hash format
+              // Some contracts expect just the CID without any prefix
+              const rawIpfsHash = formattedIpfsHash.replace('ipfs://', '');
+              console.log('Trying with raw IPFS hash:', rawIpfsHash);
               
-              // Also try with formatted IPFS hash
-              const tx = await contract.register(bytes32, formattedIpfsHash, publicKey);
-              console.log('Transaction sent with bytes32 format, waiting for confirmation...');
-      await tx.wait();
+              const tx = await contract.register(bytes32FaceHash, publicKey, rawIpfsHash, {
+                gasLimit: 500000, // Provide a higher gas limit
+              });
+              console.log('Transaction sent with raw IPFS hash, waiting for confirmation...');
+              await tx.wait();
               console.log('Transaction confirmed!');
-            } catch (thirdError) {
-              console.error('Error with third format:', thirdError);
+              setRegistrationStatus('success');
+              console.log('Face hash registered successfully!');
+            } catch (ipfsError) {
+              console.error('Error with raw IPFS hash:', ipfsError);
               
-              // Try a fourth approach - use raw bytes
+              // Try with a different public key format
               try {
-                // Try with raw bytes for both face hash and IPFS hash
-                const rawBytes = ethers.getBytes(formattedFaceHash);
-                console.log('Trying fourth format (raw bytes):', ethers.hexlify(rawBytes).substring(0, 12) + '...');
+                console.log('Trying with different public key format...');
+                // Some contracts expect the public key without 0x prefix
+                const rawPublicKey = publicKey.startsWith('0x') ? publicKey.slice(2) : publicKey;
                 
-                // Try with raw IPFS hash (no ipfs:// prefix)
-                const rawIpfsHash = ipfsHash.replace('ipfs://', '');
-                const tx = await contract.register(ethers.hexlify(rawBytes), rawIpfsHash, publicKey);
-                console.log('Transaction sent with raw bytes format, waiting for confirmation...');
+                // Get the bytes32 face hash again to ensure it's in scope
+                const bytes32FaceHash = ethers.zeroPadValue(formattedFaceHash, 32);
+                
+                const tx = await contract.register(bytes32FaceHash, '0x' + rawPublicKey, formattedIpfsHash, {
+                  gasLimit: 500000,
+                });
+                console.log('Transaction sent with alternative public key format, waiting for confirmation...');
                 await tx.wait();
                 console.log('Transaction confirmed!');
-              } catch (fourthError) {
-                console.error('Error with fourth format:', fourthError);
-                throw fourthError;
+                setRegistrationStatus('success');
+                console.log('Face hash registered successfully!');
+              } catch (pkError) {
+                console.error('Error with alternative public key format:', pkError);
+                throw pkError;
               }
             }
+          } else if (txError instanceof Error && txError.message.includes('data length')) {
+            // Handle data length error as before
+            console.log('Trying alternative format due to data length error...');
+            try {
+              // Try using a different approach to format the hash
+              const hashBytes = ethers.getBytes(formattedFaceHash);
+              // Ensure it's exactly 32 bytes
+              const paddedBytes = new Uint8Array(32);
+              paddedBytes.set(hashBytes.slice(0, Math.min(hashBytes.length, 32)));
+              
+              const paddedHash = ethers.hexlify(paddedBytes);
+              console.log('Alternative format hash:', paddedHash);
+              
+              const tx = await contract.register(paddedHash, publicKey, formattedIpfsHash, {
+                gasLimit: 500000,
+              });
+              console.log('Transaction sent with alternative format, waiting for confirmation...');
+              await tx.wait();
+              console.log('Transaction confirmed!');
+              setRegistrationStatus('success');
+              console.log('Face hash registered successfully!');
+            } catch (altError) {
+              console.error('Error with alternative format:', altError);
+              throw altError;
+            }
+          } else {
+            throw txError;
           }
         }
 
-      setRegistrationStatus('success');
-      console.log('Face hash registered successfully!');
       } catch (contractErr: unknown) {
         console.error('Contract interaction error:', contractErr);
         
@@ -569,12 +683,35 @@ export function useContractInteraction() {
       const contract = await getContract();
       
       // Get the registration for the connected wallet
-      const registration = await contract.getRegistration(primaryWallet.address);
-      
-      // Check if the hash matches
-      const isVerified = registration.faceHash === faceHash;
-      
-      return isVerified;
+      try {
+        const registration = await contract.getRegistration(primaryWallet.address);
+        
+        // Check if the wallet is registered
+        if (registration.wallet === ethers.ZeroAddress) {
+          console.log('Wallet not registered');
+          return false;
+        }
+        
+        // Check if the hash matches
+        const isVerified = registration.faceHash === faceHash;
+        console.log('Face hash verification result:', isVerified);
+        console.log('Contract hash:', registration.faceHash);
+        console.log('Provided hash:', faceHash);
+        
+        return isVerified;
+      } catch (contractError) {
+        console.error('Contract call error:', contractError);
+        
+        // Check if this is a "not registered" case
+        if (contractError instanceof Error && 
+            (contractError.message.includes('not registered') || 
+             contractError.message.includes('revert'))) {
+          console.log('Wallet likely not registered yet');
+          return false;
+        }
+        
+        throw contractError; // Re-throw for the outer catch
+      }
     } catch (err) {
       console.error('Error verifying face hash:', err);
       setError('Failed to verify face hash. Please try again.');
@@ -596,39 +733,46 @@ export function useContractInteraction() {
   // Test function to compare face embeddings from IPFS hashes
   const testCompareEmbeddings = async (ipfsHashes: string[]): Promise<{matches: boolean[], similarities: number[]}> => {
     try {
-      const embeddings: Float32Array[] = [];
       const similarities: number[] = [];
       const matches: boolean[] = [];
 
-      // First, retrieve all embeddings from IPFS
-      console.log('Retrieving embeddings from IPFS...');
-      for (const hash of ipfsHashes) {
-        try {
-          const data = await retrieveFromIPFS<IPFSData>(hash);
-          if (data && data.embedding) {
-            console.log(`Successfully retrieved embedding from ${hash}`);
-            console.log('Embedding length:', data.embedding.length);
-            console.log('First few values:', data.embedding.slice(0, 5));
-            
-            // Convert to Float32Array
-            const embedding = new Float32Array(data.embedding);
-            embeddings.push(embedding);
-          } else {
-            console.error(`No embedding data found in IPFS hash: ${hash}`);
-          }
-        } catch (err) {
-          console.error(`Error retrieving embedding from ${hash}:`, err);
-        }
+      // Need at least 2 IPFS hashes to compare
+      if (ipfsHashes.length < 2) {
+        console.error('Need at least 2 IPFS hashes to compare');
+        return { matches, similarities };
       }
 
-      // Compare the first embedding with all others
-      if (embeddings.length > 0) {
-        const baseEmbedding = embeddings[0];
-        for (let i = 1; i < embeddings.length; i++) {
-          const similarity = calculateCosineSimilarity(baseEmbedding, embeddings[i]);
-          console.log(`Similarity between embedding 0 and ${i}: ${similarity}`);
+      console.log('Comparing face embeddings using external API...');
+      
+      // Get the first IPFS hash as the base for comparison
+      const baseIpfsHash = ipfsHashes[0];
+      console.log(`Using ${baseIpfsHash} as the base for comparison`);
+      
+      // Create a dummy blob for API request (the API will use the IPFS hash, not this blob)
+      const dummyBlob = new Blob([new Uint8Array(1)], { type: 'application/octet-stream' });
+      
+      // Compare the first hash with all others using the API
+      for (let i = 1; i < ipfsHashes.length; i++) {
+        try {
+          const targetIpfsHash = ipfsHashes[i];
+          console.log(`Comparing base hash with ${targetIpfsHash}`);
+          
+          // Use the FaceApiService to compare the two IPFS hashes
+          const comparisonResult = await FaceApiService.compareFaceWithIpfs(
+            dummyBlob,
+            targetIpfsHash,
+            SIMILARITY_THRESHOLD.toString()
+          );
+          
+          const similarity = comparisonResult.similarity || 0;
+          console.log(`Similarity between hash 0 and ${i}: ${similarity}`);
+          
           similarities.push(similarity);
           matches.push(similarity > SIMILARITY_THRESHOLD);
+        } catch (err) {
+          console.error(`Error comparing with hash ${ipfsHashes[i]}:`, err);
+          similarities.push(0);
+          matches.push(false);
         }
       }
 

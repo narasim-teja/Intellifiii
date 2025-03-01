@@ -584,21 +584,13 @@ async function handleFaceVerification(request: Request): Promise<Response> {
       throw new Error("No image path provided");
     }
 
-    // Process the input image
-    const embeddingTensor = await processImage(body.imagePath);
-    const embeddingData = Array.from(await embeddingTensor.data());
-    embeddingTensor.dispose();
-
-    // Validate the embedding
-    const validationResult = validateEmbedding(embeddingData);
-    if (!validationResult.isValid) {
-      throw new Error(validationResult.message || 'Invalid face embedding');
-    }
-
+    // Read the image file
+    const imageBuffer = await readFile(body.imagePath);
+    
     // Get all registered faces from the contract
     const registeredFaces = await getRegisteredFaces();
     
-    // Find the best match by comparing with IPFS embeddings
+    // Find the best match by comparing with IPFS embeddings using the external API
     let bestMatch = {
       address: '',
       similarity: 0
@@ -606,11 +598,36 @@ async function handleFaceVerification(request: Request): Promise<Response> {
 
     for (const face of registeredFaces) {
       try {
-        // Get the embedding from IPFS
-        const ipfsData = await retrieveFromIPFS(face.ipfsHash);
-        const storedEmbedding = ipfsData.embedding;
+        // Skip if no IPFS hash
+        if (!face.ipfsHash) {
+          console.warn(`No IPFS hash for address: ${face.address}`);
+          continue;
+        }
         
-        const similarity = calculateCosineSimilarity(embeddingData, storedEmbedding);
+        // Create form data for the API request
+        const formData = new FormData();
+        const blob = new Blob([imageBuffer], { type: "image/jpeg" });
+        formData.append("file", blob, "image.jpg");
+        formData.append("ipfs_hash", face.ipfsHash);
+        formData.append("threshold", SIMILARITY_THRESHOLD.toString());
+        
+        // Make the API request
+        const response = await axios.post(
+          "https://cdirks4--face-analysis-api-v0-1-compare-face-with-ipfs.modal.run",
+          formData,
+          {
+            headers: {
+              "Content-Type": "multipart/form-data",
+            },
+            timeout: 10000, // 10 second timeout
+          }
+        );
+        
+        // Get the similarity score from the response
+        const similarity = response.data.similarity || 0;
+        
+        console.log(`Similarity with ${face.address}: ${similarity}`);
+        
         if (similarity > bestMatch.similarity) {
           bestMatch = {
             address: face.address,
@@ -618,7 +635,7 @@ async function handleFaceVerification(request: Request): Promise<Response> {
           };
         }
       } catch (error) {
-        console.error(`Error retrieving embedding for ${face.address}:`, error);
+        console.error(`Error comparing face with ${face.address}:`, error);
         continue;
       }
     }

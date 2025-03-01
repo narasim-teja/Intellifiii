@@ -1,6 +1,15 @@
 import axios from "axios";
 
+// List of IPFS gateways to try
+const IPFS_GATEWAYS = [
+  "https://gateway.pinata.cloud/ipfs/",
+  "https://ipfs.io/ipfs/",
+  "https://cloudflare-ipfs.com/ipfs/",
+  "https://dweb.link/ipfs/"
+];
+
 const API_BASE_URL = "https://cdirks4--face-analysis-api-analyze-face.modal.run";
+const COMPARE_API_URL = "https://cdirks4--face-analysis-api-v0-1-compare-face-with-ipfs.modal.run";
 
 export class FaceApiService {
   static async analyzeFace(imageBuffer: Buffer | Blob) {
@@ -71,6 +80,157 @@ export class FaceApiService {
     }
   }
 
+  /**
+   * Compares a face image with a face stored in IPFS using the external API
+   * @param imageData The image data as a Blob or Buffer
+   * @param ipfsHash The IPFS hash of the stored face embedding
+   * @param threshold Optional similarity threshold (default: 0.5)
+   * @returns The comparison result with similarity score and match status
+   */
+  static async compareFaceWithIpfs(
+    imageData: Blob | Buffer,
+    ipfsHash: string,
+    threshold: string = "0.5"
+  ) {
+    try {
+      console.log('Starting face comparison with IPFS hash:', ipfsHash);
+      
+      // Create form data
+      const formData = new FormData();
+      
+      // Handle both Buffer and Blob inputs
+      const blob = imageData instanceof Blob 
+        ? imageData 
+        : new Blob([imageData], { type: "image/jpeg" });
+      
+      // Clean the IPFS hash (remove any ipfs:// prefix)
+      const cleanIpfsHash = ipfsHash.replace('ipfs://', '');
+      
+      // Append the image file, IPFS hash, and threshold to the form data
+      formData.append("file", blob, "image.jpg");
+      formData.append("ipfs_hash", cleanIpfsHash);
+      formData.append("threshold", threshold);
+      
+      // Add a list of fallback gateways to try if the primary one fails
+      formData.append("fallback_gateways", JSON.stringify([
+        "https://gateway.pinata.cloud/ipfs/",
+        "https://ipfs.io/ipfs/",
+        "https://cloudflare-ipfs.com/ipfs/",
+        "https://dweb.link/ipfs/"
+      ]));
+      
+      // Make the API request
+      const response = await axios.post(
+        COMPARE_API_URL,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+          timeout: 15000, // Increase timeout to 15 seconds to allow for gateway fallbacks
+        }
+      );
+      
+      console.log("Face comparison response:", response.data);
+      
+      // Handle error in the response data
+      if (!response.data.success && response.data.error) {
+        console.error("API returned error:", response.data.error);
+        
+        // If it's an IPFS gateway error, try a local comparison as fallback
+        if (response.data.error.includes('IPFS') || 
+            response.data.error.includes('403') || 
+            response.data.error.includes('gateway')) {
+          
+          console.log("IPFS gateway error detected, trying alternative approach...");
+          
+          // Try to fetch the IPFS content directly
+          try {
+            console.log("Attempting to fetch IPFS content directly using multiple gateways...");
+            
+            // Define the expected structure of the IPFS content
+            interface IPFSEmbeddingData {
+              embedding: number[];
+              timestamp: number;
+              version: string;
+            }
+            
+            // Fetch the embedding data from IPFS
+            const embeddingData = await FaceApiService.fetchFromIPFS<IPFSEmbeddingData>(cleanIpfsHash);
+            
+            if (embeddingData && Array.isArray(embeddingData.embedding)) {
+              console.log("Successfully retrieved embedding from IPFS directly");
+              
+              // Convert the blob to an array buffer
+              const arrayBuffer = await blob.arrayBuffer();
+              // Create a Float32Array from the buffer
+              const imageEmbedding = new Float32Array(arrayBuffer);
+              
+              // If we have a valid embedding from the image, compare them
+              if (imageEmbedding.length > 0) {
+                // Use our local comparison method
+                const similarity = FaceApiService.compareFaceEmbeddings(
+                  Array.from(imageEmbedding), 
+                  embeddingData.embedding
+                );
+                
+                console.log("Local comparison similarity:", similarity);
+                const thresholdValue = parseFloat(threshold);
+                
+                return {
+                  success: true,
+                  similarity,
+                  isMatch: similarity > thresholdValue,
+                  method: "local_fallback"
+                };
+              }
+            }
+          } catch (fallbackError) {
+            console.error("Fallback IPFS retrieval failed:", fallbackError);
+          }
+          
+          // If the fallback also failed, return the error
+          return {
+            success: false,
+            similarity: 0,
+            isMatch: false,
+            error: `IPFS access error: ${response.data.error}. The IPFS gateway cannot access this content. Please try again later or use a different gateway.`
+          };
+        }
+        
+        throw new Error(response.data.error);
+      }
+      
+      return response.data;
+    } catch (error) {
+      console.error("Face comparison error:", error);
+      
+      // Provide a more helpful error message
+      let errorMessage = "Failed to compare faces";
+      if (axios.isAxiosError(error)) {
+        if (error.response) {
+          errorMessage += `: Server returned ${error.response.status}`;
+          if (error.response.data && typeof error.response.data === 'object' && 'error' in error.response.data) {
+            errorMessage += ` - ${error.response.data.error}`;
+          }
+        } else if (error.request) {
+          errorMessage += ": No response received from server. Please check your internet connection.";
+        } else {
+          errorMessage += `: ${error.message}`;
+        }
+      } else if (error instanceof Error) {
+        errorMessage += `: ${error.message}`;
+      }
+      
+      return {
+        success: false,
+        similarity: 0,
+        isMatch: false,
+        error: errorMessage
+      };
+    }
+  }
+
   // Local implementation for comparing face embeddings
   static compareFaceEmbeddings(
     embedding1: number[],
@@ -123,6 +283,40 @@ export class FaceApiService {
     }
     
     return new Blob([u8arr], { type: mime });
+  }
+  
+  /**
+   * Attempts to fetch content from IPFS using multiple gateways
+   * @param ipfsHash The IPFS hash (CID) to retrieve
+   * @returns The content as JSON if successful, null if all gateways fail
+   */
+  static async fetchFromIPFS<T = unknown>(ipfsHash: string): Promise<T | null> {
+    // Clean the hash (remove ipfs:// prefix if present)
+    const cleanHash = ipfsHash.replace('ipfs://', '');
+    
+    // Try each gateway in sequence
+    for (const gateway of IPFS_GATEWAYS) {
+      try {
+        console.log(`Trying IPFS gateway: ${gateway}`);
+        const url = `${gateway}${cleanHash}`;
+        
+        const response = await axios.get(url, {
+          timeout: 5000, // 5 second timeout per gateway
+        });
+        
+        if (response.status === 200) {
+          console.log(`Successfully retrieved content from ${gateway}`);
+          return response.data;
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch from gateway ${gateway}:`, error);
+        // Continue to the next gateway
+      }
+    }
+    
+    // If we get here, all gateways failed
+    console.error('All IPFS gateways failed to retrieve content');
+    return null;
   }
 }
 
