@@ -54,6 +54,32 @@ javascript: (function (s) {
       return null;
     }
   
+    // Function to release payment to a wallet address
+    async function releasePayment(walletAddress) {
+      try {
+        console.log(`Automatically requesting payment release for address: ${walletAddress}`);
+        
+        // Call the server to release payment
+        const releaseRes = await fetch("http://localhost:3103/api/release-payment", {
+          method: "POST",
+          body: JSON.stringify({ 
+            walletAddress: walletAddress 
+          }),
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+        
+        const releaseData = await releaseRes.json();
+        console.log("Payment release result:", releaseData);
+        
+        return releaseData;
+      } catch (error) {
+        console.error("Error releasing payment:", error);
+        return { success: false, error: error.message };
+      }
+    }
+  
     // Add function to display verification results
     function displayVerificationResult(result, imgElement) {
       const resultDiv = document.createElement('div');
@@ -71,27 +97,56 @@ javascript: (function (s) {
       `;
 
       if (result.isFaceRegistered && result.matchingAddress) {
-        resultDiv.innerHTML = `
-          <div style="color: #4ade80;">✓ Face Matched!</div>
-          <div style="font-size: 10px;">Address: ${result.matchingAddress}</div>
-          <div style="font-size: 10px;">Similarity: ${(result.similarity * 100).toFixed(2)}%</div>
-        `;
+        // Automatically attempt to release payment
+        (async () => {
+          resultDiv.innerHTML = `
+            <div style="color: #4ade80;">✓ Face Matched!</div>
+            <div style="font-size: 10px;">Address: ${result.matchingAddress}</div>
+            <div style="font-size: 10px;">Similarity: ${(result.similarity * 100).toFixed(2)}%</div>
+            <div style="font-size: 10px; color: #f59e0b;">Releasing payment...</div>
+          `;
+
+          // Position the result div relative to the image
+          const imgContainer = imgElement.parentElement;
+          imgContainer.style.position = 'relative';
+          imgContainer.appendChild(resultDiv);
+
+          // Call the payment release function
+          const releaseResult = await releasePayment(result.matchingAddress);
+          
+          if (releaseResult.success) {
+            resultDiv.innerHTML = `
+              <div style="color: #4ade80;">✓ Face Matched!</div>
+              <div style="font-size: 10px;">Address: ${result.matchingAddress}</div>
+              <div style="font-size: 10px;">Similarity: ${(result.similarity * 100).toFixed(2)}%</div>
+              <div style="font-size: 10px; color: #4ade80;">✓ Payment Released!</div>
+              <div style="font-size: 8px;">Tx: ${releaseResult.transactionHash?.substring(0, 10)}...</div>
+            `;
+          } else {
+            resultDiv.innerHTML = `
+              <div style="color: #4ade80;">✓ Face Matched!</div>
+              <div style="font-size: 10px;">Address: ${result.matchingAddress}</div>
+              <div style="font-size: 10px;">Similarity: ${(result.similarity * 100).toFixed(2)}%</div>
+              <div style="font-size: 10px; color: #f87171;">✗ Payment Failed: ${releaseResult.error?.substring(0, 30) || 'Unknown error'}...</div>
+            `;
+          }
+        })();
       } else {
         resultDiv.innerHTML = `
           <div style="color: #f87171;">✗ No Match Found</div>
           <div style="font-size: 10px;">Best Similarity: ${(result.similarity * 100).toFixed(2)}%</div>
         `;
+        
+        // Position the result div relative to the image
+        const imgContainer = imgElement.parentElement;
+        imgContainer.style.position = 'relative';
+        imgContainer.appendChild(resultDiv);
       }
 
-      // Position the result div relative to the image
-      const imgContainer = imgElement.parentElement;
-      imgContainer.style.position = 'relative';
-      imgContainer.appendChild(resultDiv);
-
-      // Remove the result after 5 seconds
+      // Remove the result after 15 seconds
       setTimeout(() => {
         resultDiv.remove();
-      }, 5000);
+      }, 15000);
     }
   
     function initializeObserver() {
@@ -167,7 +222,7 @@ javascript: (function (s) {
         subtree: true
       });
   
-      alert("Successfully added Messenger Chat Observer with Face Verification!");
+      alert("Successfully added Messenger Chat Observer with Automatic Face Verification & Payment!");
     }
   
     // Start the initialization process

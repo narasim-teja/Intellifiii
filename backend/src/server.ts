@@ -43,10 +43,27 @@ const CORS_HEADERS = {
 // Add smart contract configuration
 const RPC_URL = process.env.RPC_URL;
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
+const CONTRACT_OWNER_PRIVATE_KEY = process.env.CONTRACT_OWNER_PRIVATE_KEY;
 
 // Initialize ethers provider and contract
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const contract = new ethers.Contract(CONTRACT_ADDRESS!, faceAbi, provider);
+
+// Initialize contract with signer for transactions
+let contractWithSigner: ethers.Contract | null = null;
+
+// Initialize the contract with signer if private key is available
+if (CONTRACT_OWNER_PRIVATE_KEY) {
+  try {
+    const wallet = new ethers.Wallet(CONTRACT_OWNER_PRIVATE_KEY, provider);
+    contractWithSigner = new ethers.Contract(CONTRACT_ADDRESS!, faceAbi, wallet);
+    console.log("Contract owner wallet initialized successfully");
+  } catch (error) {
+    console.error("Failed to initialize contract owner wallet:", error);
+  }
+} else {
+  console.warn("CONTRACT_OWNER_PRIVATE_KEY not provided. Payment release functionality will not work.");
+}
 
 // Function to get all registered faces from the contract
 async function getRegisteredFaces(): Promise<{ address: string; ipfsHash: string }[]> {
@@ -85,6 +102,8 @@ const server = Bun.serve({
           return handleImageSave(request);
         case "/api/verify-face":
           return handleFaceVerification(request);
+        case "/api/release-payment":
+          return handlePaymentRelease(request);
         default:
           return new Response("Not Found", { status: 404 });
       }
@@ -264,6 +283,168 @@ async function handleFaceVerification(request: Request): Promise<Response> {
         similarity: 0,
         isFaceRegistered: false,
         matchingAddress: null
+      }),
+      { 
+        status: 500, 
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS.headers } 
+      }
+    );
+  }
+}
+
+// Handle payment release to a verified wallet address
+async function handlePaymentRelease(request: Request): Promise<Response> {
+  console.log("🔔 Payment release request received");
+  
+  if (!request.headers.get("Content-Type")?.includes("application/json")) {
+    console.error("❌ Invalid content type for payment release request");
+    return new Response(
+      JSON.stringify({ error: "Invalid content type" }), 
+      { 
+        status: 400, 
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS.headers } 
+      }
+    );
+  }
+
+  try {
+    // Check if contract with signer is initialized
+    if (!contractWithSigner) {
+      console.error("❌ Contract owner wallet not initialized. Cannot release payment.");
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: "Contract owner wallet not initialized. Check server configuration." 
+        }),
+        { 
+          status: 500, 
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS.headers } 
+        }
+      );
+    }
+
+    const body = await request.json() as { walletAddress: string };
+    if (!body.walletAddress) {
+      console.error("❌ No wallet address provided in payment release request");
+      throw new Error("No wallet address provided");
+    }
+
+    const walletAddress = body.walletAddress;
+    console.log(`🔍 Attempting to release payment to wallet: ${walletAddress}`);
+
+    // Check if the address is registered
+    try {
+      console.log(`🔍 Verifying registration for address: ${walletAddress}`);
+      const registration = await contract.getRegistration(walletAddress);
+      console.log(`✅ Found registration for ${walletAddress}:`, {
+        wallet: registration.wallet,
+        ipfsHash: registration.ipfsHash,
+        timestamp: new Date(Number(registration.timestamp) * 1000).toISOString()
+      });
+    } catch (error) {
+      console.error(`❌ Error verifying registration for ${walletAddress}:`, error);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: "Address is not registered in the contract" 
+        }),
+        { 
+          status: 400, 
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS.headers } 
+        }
+      );
+    }
+
+    // Call the releasePayment function on the contract
+    try {
+      console.log(`💸 Calling releasePayment for address: ${walletAddress}`);
+      
+      // Get the current gas price
+      const gasPrice = await provider.getFeeData();
+      console.log(`⛽ Current gas price: ${ethers.formatUnits(gasPrice.gasPrice || 0, 'gwei')} gwei`);
+      
+      // Get the contract owner's balance
+      const signer = contractWithSigner.runner as ethers.Wallet;
+      const balance = await provider.getBalance(signer.address);
+      console.log(`💰 Contract owner balance: ${ethers.formatEther(balance)} ETH`);
+      
+      // Call the contract function
+      const tx = await contractWithSigner.releasePayment(walletAddress);
+      console.log(`📤 Transaction submitted: ${tx.hash}`);
+      
+      // Wait for the transaction to be mined
+      console.log(`⏳ Waiting for transaction to be mined...`);
+      const receipt = await tx.wait();
+      console.log(`✅ Transaction confirmed in block ${receipt.blockNumber}`);
+      
+      // Check for events in the receipt
+      if (receipt.logs && receipt.logs.length > 0) {
+        console.log(`📝 Transaction logs:`, receipt.logs.length);
+        try {
+          // Try to parse the PaymentSent event
+          const contractInterface = new ethers.Interface(faceAbi);
+          for (const log of receipt.logs) {
+            try {
+              const parsedLog = contractInterface.parseLog(log);
+              if (parsedLog && parsedLog.name === 'PaymentSent') {
+                console.log(`💰 Payment sent event detected:`, {
+                  wallet: parsedLog.args[0],
+                  amount: ethers.formatEther(parsedLog.args[1])
+                });
+              }
+            } catch (e) {
+              // Skip logs that can't be parsed
+            }
+          }
+        } catch (error) {
+          console.error(`⚠️ Error parsing transaction logs:`, error);
+        }
+      }
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          transactionHash: tx.hash,
+          blockNumber: receipt.blockNumber
+        }),
+        { 
+          status: 200, 
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS.headers } 
+        }
+      );
+    } catch (error) {
+      console.error(`❌ Error releasing payment to ${walletAddress}:`, error);
+      
+      // Provide more detailed error message
+      let errorMessage = "Failed to release payment";
+      if (error instanceof Error) {
+        // Check for common contract errors
+        if (error.message.includes("execution reverted")) {
+          errorMessage = "Contract execution reverted. Payment may have already been sent or not authorized.";
+        } else if (error.message.includes("insufficient funds")) {
+          errorMessage = "Insufficient funds in contract owner wallet to pay for gas.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: errorMessage
+        }),
+        { 
+          status: 500, 
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS.headers } 
+        }
+      );
+    }
+  } catch (error) {
+    console.error('❌ Payment release error:', error);
+    return new Response(
+      JSON.stringify({ 
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to process payment release"
       }),
       { 
         status: 500, 

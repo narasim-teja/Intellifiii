@@ -8,6 +8,12 @@ contract FaceRegistration {
     constructor() {
         owner = msg.sender;
     }
+    
+    // Modifier to restrict functions to the owner only
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not authorized");
+        _;
+    }
 
     // Structure to store registration details
     struct Registration {
@@ -24,7 +30,7 @@ contract FaceRegistration {
     // Array of registrant addresses (for enumeration if needed)
     address[] public registrants;
     
-    // Separate mapping to track if payment has been claimed
+    // Separate mapping to track if payment has been sent
     mapping(address => bool) public paymentSent;
     
     // Events for transparency
@@ -43,7 +49,11 @@ contract FaceRegistration {
      * @param _publicKey The public key associated with the user's wallet.
      * @param _ipfsHash The IPFS hash containing additional registration data.
      */
-    function register(bytes32 _faceHash, bytes calldata _publicKey, string calldata _ipfsHash) external {
+    function register(
+        bytes32 _faceHash,
+        bytes calldata _publicKey,
+        string calldata _ipfsHash
+    ) external {
         require(registrations[msg.sender].wallet == address(0), "Already registered");
         
         Registration memory newRegistration = Registration({
@@ -61,21 +71,21 @@ contract FaceRegistration {
     }
     
     /**
-     * @notice Allows a registered user to claim a payment of 0.01 ETH.
-     * Assumes that off-chain verification has been performed before calling this function.
+     * @notice Allows the owner to release a payment of 0.01 ETH to a registered wallet.
+     * @param _wallet The wallet address of the registrant to receive the payment.
      */
-    function claimPayment() external {
-        require(registrations[msg.sender].wallet != address(0), "Not registered");
-        require(!paymentSent[msg.sender], "Payment already claimed");
+    function releasePayment(address _wallet) external onlyOwner {
+        require(registrations[_wallet].wallet != address(0), "Not registered");
+        require(!paymentSent[_wallet], "Payment already sent");
         
         uint256 payment = 0.01 ether;
         require(address(this).balance >= payment, "Insufficient contract balance");
         
-        // Mark payment as sent before transferring to prevent reentrancy
-        paymentSent[msg.sender] = true;
-        payable(msg.sender).transfer(payment);
+        // Mark payment as sent to prevent reentrancy
+        paymentSent[_wallet] = true;
+        payable(_wallet).transfer(payment);
         
-        emit PaymentSent(msg.sender, payment);
+        emit PaymentSent(_wallet, payment);
     }
     
     /**
