@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { useDynamicContext } from '@dynamic-labs/sdk-react-core';
 import { getSigner } from '@dynamic-labs/ethers-v6';
@@ -24,12 +24,12 @@ export function useContractInteraction() {
   const [publicKeyInfo, setPublicKeyInfo] = useState<{key: string | null, source: string | null}>({ key: null, source: null });
 
   // Check for public key when wallet connects
-  useEffect(() => {
-    if (primaryWallet) {
-      checkPublicKey();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [primaryWallet]);
+  // useEffect(() => {
+  //   if (primaryWallet) {
+  //     checkPublicKey();
+  //   }
+  // // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [primaryWallet]);
 
   // Function to check and log the public key
   const checkPublicKey = useCallback(async () => {
@@ -798,6 +798,7 @@ export function useContractInteraction() {
     uniquenessStatus,
     walletAddress: primaryWallet?.address,
     ensureValidBytesLike,
-    testCompareEmbeddings
+    testCompareEmbeddings,
+    getContract
   };
 } 
