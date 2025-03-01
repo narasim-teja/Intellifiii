@@ -9,7 +9,7 @@ import faceAbi from './faceAbi.json';
 
 // Threshold for face similarity (0.75 is a good balance for face recognition)
 // Increasing to 0.85 to reduce false positives - different people should have lower similarity
-const SIMILARITY_THRESHOLD = 0.70;
+const SIMILARITY_THRESHOLD = 0.60;
 
 // Contract address - replace with your deployed contract address
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS;
